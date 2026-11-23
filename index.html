@@ -28,10 +28,15 @@
 <body class="min-h-screen flex flex-col justify-between p-4 sm:p-6 max-w-lg mx-auto">
 
   <!-- Cabecera Oficial -->
-  <header class="text-center space-y-1.5 pb-3 border-b border-slate-700/60">
-    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400 text-slate-900 text-[11px] font-black uppercase tracking-wider">
-      <i class="fa-solid fa-qrcode"></i>
-      <span>Acreditación en Puerta</span>
+  <header class="text-center space-y-1.5 pb-3 border-b border-slate-700/60 relative">
+    <div class="flex items-center justify-between">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400 text-slate-900 text-[11px] font-black uppercase tracking-wider">
+        <i class="fa-solid fa-qrcode"></i>
+        <span>Acreditación en Puerta</span>
+      </div>
+      <button type="button" onclick="toggleModoDemo()" id="btnBadgeDemo" class="text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 hover:border-amber-400 transition cursor-pointer">
+        <span>Modo: </span><strong id="txtBadgeModo" class="text-emerald-400">En Vivo</strong>
+      </button>
     </div>
     <h1 class="text-xl sm:text-2xl font-black text-white tracking-tight">Cena Benéfica Katie James</h1>
     <p class="text-xs text-slate-400">Club Campestre Pereira • Control en Tiempo Real</p>
@@ -113,19 +118,136 @@
 
   <script>
     // URL OFICIAL DEL BACKEND (Google Apps Script)
-    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwKBIzyYyxV6hxJnqvd7HykUZUCXaU9ILehptCacB0YCoJ3fKu9f6-eNo2-3XlCCyN4/exec';
+    const DEFAULT_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyisT_KxW3GshQCmjrSli6SqxrhVhvFMIcHlAAM1Q92BBeGLY4R_vAVf0Lz3YI-Tbi1/exec';
+    let APPS_SCRIPT_URL = localStorage.getItem('cf_scanner_api_url') || DEFAULT_APPS_SCRIPT_URL;
+
+    // Si viene por parámetro en la URL (?api=...)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('api')) {
+        APPS_SCRIPT_URL = urlParams.get('api');
+        localStorage.setItem('cf_scanner_api_url', APPS_SCRIPT_URL);
+      }
+    } catch(e) {}
+
     let html5QrScanner = null;
     let camarasDisponibles = [];
     let camaraActualIndex = 0;
     let procesandoScan = false;
     let __reservaActual = null;
+    let __modoDemoActivo = false;
 
-    // Cliente JSONP para consultar y actualizar Google Sheets sin restricciones de CORS
-    function llamarApiAppsScript(params, callback) {
+    // Base de datos de reserva para pruebas sin conexión
+    let __reservasDemo = [
+      { idReserva: "CENA-2026-0001", nombre: "Carlos Andrés Pérez", cedula: "1088234567", cantidadBoletas: 2, acompanantes: "María Gómez", valorFormato: "$ 1.200.000", asistenciaPuerta: "Pendiente" },
+      { idReserva: "CENA-2026-0002", nombre: "Constructora del Café S.A.S.", cedula: "900.123.456-7", cantidadBoletas: 15, acompanantes: "Delegación Directiva (15 cupos)", valorFormato: "$ 5.000.000", asistenciaPuerta: "Ingresó" },
+      { idReserva: "CENA-2026-0003", nombre: "Dra. Patricia Jaramillo", cedula: "42150998", cantidadBoletas: 1, acompanantes: "", valorFormato: "$ 500.000", asistenciaPuerta: "Pendiente" }
+    ];
+
+    function toggleModoDemo() {
+      __modoDemoActivo = !__modoDemoActivo;
+      actualizarIndicadorModo();
+    }
+
+    function activarModoDemo() {
+      __modoDemoActivo = true;
+      actualizarIndicadorModo();
+      cerrarModalResultado();
+      alert('🧪 ¡Modo Demostración Activado!\nPuedes escanear cualquier código QR o buscar en manual: CENA-2026-0001, CENA-2026-0002 o cédula 1088234567.');
+    }
+
+    function actualizarIndicadorModo() {
+      const badgeTxt = document.getElementById('txtBadgeModo');
+      const connTxt = document.getElementById('txtEstadoConexion');
+      if (__modoDemoActivo) {
+        if (badgeTxt) { badgeTxt.innerText = 'Pruebas / Demo'; badgeTxt.className = 'text-amber-400 font-bold'; }
+        if (connTxt) connTxt.innerText = 'Modo Demostración (Simulado)';
+      } else {
+        if (badgeTxt) { badgeTxt.innerText = 'En Vivo'; badgeTxt.className = 'text-emerald-400 font-bold'; }
+        if (connTxt) connTxt.innerText = 'Conectado a Google Sheets';
+      }
+    }
+
+    // Cliente Híbrido (Fetch Directo + Fallback JSONP) para consultar y actualizar Google Sheets sin restricciones
+    async function llamarApiAppsScript(params, callback) {
+      if (__modoDemoActivo) {
+        setTimeout(() => {
+          if (params.action === 'validarReserva') {
+            const termino = String(params.codigo || '').trim().toUpperCase();
+            let encontrada = __reservasDemo.find(r => 
+              String(r.idReserva).toUpperCase() === termino ||
+              String(r.cedula).replace(/\D/g, '') === termino.replace(/\D/g, '') ||
+              String(r.nombre).toUpperCase().indexOf(termino) !== -1
+            );
+            if (!encontrada) {
+              encontrada = {
+                idReserva: termino.startsWith('CENA') ? termino : 'DEMO-' + termino.slice(0, 8),
+                nombre: 'Invitado(a) de Prueba',
+                cedula: '1088000111',
+                cantidadBoletas: 2,
+                acompanantes: 'Acompañante de Prueba',
+                valorFormato: '$ 1.200.000',
+                asistenciaPuerta: 'Pendiente'
+              };
+              __reservasDemo.push(encontrada);
+            }
+            callback(null, { status: 'success', reserva: encontrada });
+          } else if (params.action === 'checkin') {
+            const res = __reservasDemo.find(r => r.idReserva === params.id);
+            if (res) res.asistenciaPuerta = params.estado;
+            callback(null, { status: 'success' });
+          } else {
+            callback(null, { status: 'success' });
+          }
+        }, 200);
+        return;
+      }
+
+      // ESTRATEGIA 1: Fetch directo con CORS y redirección automática (302)
+      try {
+        const qsFetch = new URLSearchParams(params);
+        const urlFetch = APPS_SCRIPT_URL + '?' + qsFetch.toString();
+        const controller = new AbortController();
+        const tId = setTimeout(() => controller.abort(), 7000);
+
+        const resp = await fetch(urlFetch, {
+          method: 'GET',
+          mode: 'cors',
+          cache: 'no-cache',
+          redirect: 'follow',
+          signal: controller.signal
+        });
+        clearTimeout(tId);
+
+        if (resp.ok) {
+          const contentType = resp.headers.get('content-type') || '';
+          if (contentType.includes('application/json') || contentType.includes('text/plain')) {
+            const data = await resp.json();
+            return callback(null, data);
+          }
+        }
+      } catch (fetchErr) {
+        console.warn('Fetch no disponible o bloqueado por CORS, intentando JSONP...', fetchErr);
+      }
+
+      // ESTRATEGIA 2: JSONP (Inyección dinámica de script con callback)
       const cbName = '__cb_' + Math.round(1000000 * Math.random());
+      let respondido = false;
+      const temporizador = setTimeout(() => {
+        if (!respondido) {
+          respondido = true;
+          delete window[cbName];
+          if (script && script.parentNode) script.parentNode.removeChild(script);
+          callback(new Error('Tiempo de espera agotado con Google Sheets'));
+        }
+      }, 9000);
+
       window[cbName] = function(data) {
+        if (respondido) return;
+        respondido = true;
+        clearTimeout(temporizador);
         delete window[cbName];
-        if (script.parentNode) script.parentNode.removeChild(script);
+        if (script && script.parentNode) script.parentNode.removeChild(script);
         callback(null, data);
       };
 
@@ -135,8 +257,11 @@
       const script = document.createElement('script');
       script.src = APPS_SCRIPT_URL + '?' + qs.toString();
       script.onerror = function() {
+        if (respondido) return;
+        respondido = true;
+        clearTimeout(temporizador);
         delete window[cbName];
-        if (script.parentNode) script.parentNode.removeChild(script);
+        if (script && script.parentNode) script.parentNode.removeChild(script);
         callback(new Error('Error de conexión con Google Sheets'));
       };
       document.body.appendChild(script);
@@ -290,9 +415,16 @@
             <div class="text-center space-y-3">
               <div class="w-14 h-14 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-2xl mx-auto font-black">✕</div>
               <h3 class="text-base font-black text-rose-900">Error de Conexión</h3>
-              <p class="text-xs text-slate-600">No se pudo conectar con el servidor. Revisa tu conexión a internet.</p>
-              <button type="button" onclick="cerrarModalResultado()" class="w-full py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer">
-                Reintentar
+              <p class="text-xs text-slate-600">No se pudo conectar con el servidor de Google Sheets.</p>
+              <div class="bg-amber-50 p-2.5 rounded-xl border border-amber-200 text-left text-[11px] text-amber-900 space-y-1">
+                <p class="font-bold">💡 Para conectar en tiempo real:</p>
+                <p>En Google Apps Script haz clic en <strong>Implementar > Administrar implementaciones > Editar > Nueva versión > Implementar</strong>.</p>
+              </div>
+              <button type="button" onclick="activarModoDemo()" class="w-full py-2.5 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs cursor-pointer shadow-sm transition flex items-center justify-center gap-1.5">
+                <i class="fa-solid fa-flask"></i> <span>Probar en Modo Demostración (Offline)</span>
+              </button>
+              <button type="button" onclick="cerrarModalResultado()" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer">
+                Reintentar Conexión
               </button>
             </div>
           `;
