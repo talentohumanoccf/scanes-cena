@@ -38,7 +38,7 @@
   </header>
 
   <!-- Contenedor Principal de la Cámara -->
-  <main class="my-auto space-y-4 py-4">
+  <main class="my-auto space-y-4 py-3">
     
     <!-- Visor de Video en Vivo -->
     <div class="relative bg-slate-900 rounded-3xl overflow-hidden border-2 border-amber-400/80 shadow-2xl min-h-[300px] flex items-center justify-center">
@@ -70,11 +70,11 @@
 
     <!-- Controles Rápidos -->
     <div class="flex items-center gap-2">
-      <button type="button" onclick="cambiarCamara()" id="btnSwitchCam" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2 border border-slate-700">
+      <button type="button" onclick="cambiarCamara()" id="btnSwitchCam" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2 border border-slate-700 cursor-pointer">
         <i class="fa-solid fa-arrows-rotate text-amber-400"></i>
         <span>Cambiar Cámara</span>
       </button>
-      <button type="button" onclick="toggleModoManual()" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2 border border-slate-700">
+      <button type="button" onclick="toggleModoManual()" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2 border border-slate-700 cursor-pointer">
         <i class="fa-solid fa-keyboard text-amber-400"></i>
         <span>Buscar Manual</span>
       </button>
@@ -85,7 +85,7 @@
       <form onsubmit="ejecutarBusquedaManual(event)" class="flex gap-2">
         <input type="text" id="inputManualCodigo" placeholder="Código (ej. CENA-005) o Cédula..." 
           class="flex-1 px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 border border-slate-600 text-white uppercase focus:border-amber-400 outline-none" />
-        <button type="submit" class="px-4 py-2 bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl transition">
+        <button type="submit" class="px-4 py-2 bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl transition cursor-pointer">
           Validar
         </button>
       </form>
@@ -100,26 +100,49 @@
 
   </main>
 
-  <!-- Pie con Estado del Aforo -->
+  <!-- Pie con Estado del Aforo y Conexión -->
   <footer class="text-center pt-3 border-t border-slate-800 text-xs text-slate-400 space-y-1">
     <div class="flex items-center justify-between text-[11px] text-slate-400 px-2 font-medium">
       <span class="flex items-center gap-1.5">
-        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-        <span>Conectado a Google Sheets</span>
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="txtEstadoConexion">Conectado a Google Sheets</span>
       </span>
       <span id="footerAforoTxt">Aforo: 300 cupos</span>
     </div>
   </footer>
 
   <script>
-    // URL del Web App de Google Apps Script (Backend)
-    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz_71tVd0Wl8P4L0_q9wA3w5i9m7/exec'; // Se autoconfigura
+    // URL OFICIAL DEL BACKEND (Google Apps Script)
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwKBIzyYyxV6hxJnqvd7HykUZUCXaU9ILehptCacB0YCoJ3fKu9f6-eNo2-3XlCCyN4/exec';
     let html5QrScanner = null;
     let camarasDisponibles = [];
     let camaraActualIndex = 0;
     let procesandoScan = false;
+    let __reservaActual = null;
 
-    // Inicializar audio de confirmación
+    // Cliente JSONP para consultar y actualizar Google Sheets sin restricciones de CORS
+    function llamarApiAppsScript(params, callback) {
+      const cbName = '__cb_' + Math.round(1000000 * Math.random());
+      window[cbName] = function(data) {
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        callback(null, data);
+      };
+
+      const qs = new URLSearchParams(params);
+      qs.set('callback', cbName);
+
+      const script = document.createElement('script');
+      script.src = APPS_SCRIPT_URL + '?' + qs.toString();
+      script.onerror = function() {
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        callback(new Error('Error de conexión con Google Sheets'));
+      };
+      document.body.appendChild(script);
+    }
+
+    // Audio de confirmación al escanear
     function sonarBeep(tipo) {
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -138,27 +161,30 @@
           osc.stop(ctx.currentTime + 0.18);
         } else {
           osc.type = 'square';
-          osc.frequency.setValueAtTime(300, ctx.currentTime);
+          osc.frequency.setValueAtTime(320, ctx.currentTime);
           gain.gain.setValueAtTime(0.2, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
           osc.start();
-          osc.stop(ctx.currentTime + 0.3);
+          osc.stop(ctx.currentTime + 0.25);
         }
       } catch (e) {}
     }
 
-    // Arrancar video en vivo
+    // Arrancar video continuo con cámara trasera
     function iniciarVideoContinuo() {
       if (typeof Html5Qrcode === 'undefined') {
-        alert('Cargando librería... Por favor espera un momento.');
+        alert('Cargando librería de cámara... Por favor espera un segundo.');
         return;
       }
 
       Html5Qrcode.getCameras().then(devices => {
         if (devices && devices.length) {
           camarasDisponibles = devices;
-          // Preferir cámara trasera
-          const traseraIndex = devices.findIndex(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('trasera') || d.label.toLowerCase().includes('environment'));
+          const traseraIndex = devices.findIndex(d => 
+            d.label.toLowerCase().includes('back') || 
+            d.label.toLowerCase().includes('trasera') || 
+            d.label.toLowerCase().includes('environment')
+          );
           camaraActualIndex = (traseraIndex !== -1) ? traseraIndex : devices.length - 1;
           arrancarConCamaraId(camarasDisponibles[camaraActualIndex].id);
         } else {
@@ -232,7 +258,7 @@
         try { html5QrScanner.pause(true); } catch(e) {}
       }
 
-      validarReserva(codigo);
+      validarReservaEnServidor(codigo);
     }
 
     function ejecutarBusquedaManual(e) {
@@ -240,56 +266,142 @@
       const val = (document.getElementById('inputManualCodigo').value || '').trim();
       if (!val) return;
       procesandoScan = true;
-      validarReserva(val);
+      validarReservaEnServidor(val);
     }
 
-    function validarReserva(codigo) {
+    // Consulta en tiempo real a Google Sheets
+    function validarReservaEnServidor(codigo) {
       const modal = document.getElementById('resultadoModalWrap');
       const card = document.getElementById('resultadoModalCard');
       modal.classList.remove('hidden');
+
       card.innerHTML = `
-        <div class="py-6 text-center space-y-2">
+        <div class="py-6 text-center space-y-3">
           <i class="fa-solid fa-spinner fa-spin text-3xl text-amber-500"></i>
-          <div class="text-sm font-black text-slate-800">Verificando Reserva...</div>
+          <div class="text-sm font-black text-slate-800">Verificando Reserva en Google Sheets...</div>
           <p class="text-xs text-slate-500 font-mono font-bold">${codigo}</p>
         </div>
       `;
 
-      // Simular respuesta rápida o llamar a Apps Script si está conectado
-      setTimeout(() => {
-        mostrarResultadoExito(codigo);
-      }, 500);
+      llamarApiAppsScript({ action: 'validarReserva', codigo: codigo }, (err, res) => {
+        if (err || !res) {
+          sonarBeep('error');
+          card.innerHTML = `
+            <div class="text-center space-y-3">
+              <div class="w-14 h-14 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-2xl mx-auto font-black">✕</div>
+              <h3 class="text-base font-black text-rose-900">Error de Conexión</h3>
+              <p class="text-xs text-slate-600">No se pudo conectar con el servidor. Revisa tu conexión a internet.</p>
+              <button type="button" onclick="cerrarModalResultado()" class="w-full py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer">
+                Reintentar
+              </button>
+            </div>
+          `;
+          return;
+        }
+
+        if (res.status === 'not_found' || !res.reserva) {
+          sonarBeep('error');
+          card.innerHTML = `
+            <div class="text-center space-y-3">
+              <div class="w-14 h-14 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-2xl mx-auto font-black">✕</div>
+              <h3 class="text-base font-black text-rose-900">Reserva No Encontrada</h3>
+              <p class="text-xs text-slate-600">El código <strong>"${codigo}"</strong> no figura en la lista oficial de reservas.</p>
+              <button type="button" onclick="cerrarModalResultado()" class="w-full py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer">
+                Escanear Siguiente
+              </button>
+            </div>
+          `;
+          return;
+        }
+
+        mostrarDetalleReserva(res.reserva);
+      });
     }
 
-    function mostrarResultadoExito(codigo) {
+    function mostrarDetalleReserva(r) {
+      __reservaActual = r;
+      const card = document.getElementById('resultadoModalCard');
+      const yaIngreso = (r.asistenciaPuerta === 'Ingresó' || r.asistenciaPuerta === 'Ingreso');
+
+      if (yaIngreso) {
+        card.innerHTML = `
+          <div class="space-y-3 text-center">
+            <div class="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center text-2xl mx-auto font-black border border-amber-300">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <div>
+              <span class="text-[10px] bg-amber-200 text-amber-900 font-black px-2.5 py-0.5 rounded-full uppercase">Ya Registrado</span>
+              <h3 class="text-lg font-black text-amber-950 mt-1">Este pase ya ingresó</h3>
+              <p class="text-xs text-slate-500 font-mono font-bold">${r.idReserva}</p>
+            </div>
+
+            <div class="bg-amber-50 p-3.5 rounded-2xl border border-amber-200 text-left text-xs space-y-1.5">
+              <div class="flex justify-between"><span class="text-slate-500">Titular / Empresa:</span><span class="font-black text-slate-900">${r.nombre}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Cédula / NIT:</span><span class="font-bold text-slate-700">${r.cedula}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Cupos:</span><span class="font-black text-amber-800">${r.cantidadBoletas} personas</span></div>
+              ${r.acompanantes ? `<div class="pt-1 text-[11px] text-slate-600 border-t border-amber-200"><strong>Acompañantes:</strong> ${r.acompanantes}</div>` : ''}
+            </div>
+
+            <div class="flex gap-2 pt-1">
+              <button type="button" onclick="ejecutarCambioEstado('${r.idReserva}', 'Pendiente')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer">
+                Revertir a Pendiente
+              </button>
+              <button type="button" onclick="cerrarModalResultado()" class="flex-1 py-2.5 rounded-xl bg-slate-900 text-white font-black text-xs cursor-pointer">
+                Escanear Siguiente
+              </button>
+            </div>
+          </div>
+        `;
+      } else {
+        card.innerHTML = `
+          <div class="space-y-3 text-center">
+            <div class="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-3xl mx-auto font-black shadow-xs">
+              ✓
+            </div>
+            <div>
+              <span class="text-[10px] bg-emerald-100 text-emerald-800 font-black px-2.5 py-0.5 rounded-full uppercase">Pase Oficial Válido</span>
+              <h3 class="text-lg font-black text-slate-900 mt-1">Ingreso Permitido</h3>
+              <p class="text-xs text-slate-500 font-mono font-bold">${r.idReserva}</p>
+            </div>
+
+            <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-left text-xs space-y-1.5">
+              <div class="flex justify-between"><span class="text-slate-500">Titular / Empresa:</span><span class="font-black text-slate-900">${r.nombre}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Cédula / NIT:</span><span class="font-bold text-slate-700">${r.cedula}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500">Cupos Autorizados:</span><span class="font-black text-emerald-700 text-sm">${r.cantidadBoletas} asistente(s)</span></div>
+              ${r.acompanantes ? `<div class="pt-1 text-[11px] text-slate-600 border-t border-slate-200"><strong>Acompañantes:</strong> ${r.acompanantes}</div>` : ''}
+            </div>
+
+            <button type="button" onclick="ejecutarCambioEstado('${r.idReserva}', 'Ingresó')" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-black text-sm shadow-md transition cursor-pointer">
+              🚪 CONFIRMAR INGRESO EN PUERTA
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    // Envía la confirmación a Google Sheets en tiempo real
+    function ejecutarCambioEstado(idReserva, nuevoEstado) {
       const card = document.getElementById('resultadoModalCard');
       card.innerHTML = `
-        <div class="text-center space-y-3">
-          <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-3xl mx-auto font-black shadow-md">
-            ✓
-          </div>
-          <div>
-            <span class="text-[10px] bg-emerald-100 text-emerald-800 font-black px-2.5 py-0.5 rounded-full uppercase">Pase Oficial Válido</span>
-            <h3 class="text-lg font-black text-slate-900 mt-1">Ingreso Permitido</h3>
-            <p class="text-xs text-slate-500 font-mono font-bold">${codigo}</p>
-          </div>
-
-          <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-left text-xs space-y-1.5">
-            <div class="flex justify-between"><span class="text-slate-500">Titular / Empresa:</span><span class="font-bold text-slate-900">Asistente Oficial</span></div>
-            <div class="flex justify-between"><span class="text-slate-500">Cupos:</span><span class="font-black text-amber-800">Autorizado</span></div>
-            <div class="flex justify-between"><span class="text-slate-500">Lugar:</span><span class="font-bold text-slate-700">Club Campestre</span></div>
-          </div>
-
-          <button type="button" onclick="confirmarYContinuar()" class="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm shadow-md transition cursor-pointer">
-            🚪 Confirmar Ingreso y Continuar
-          </button>
+        <div class="py-6 text-center space-y-2">
+          <i class="fa-solid fa-spinner fa-spin text-3xl text-emerald-600"></i>
+          <div class="text-sm font-black text-slate-800">Registrando en Google Sheets...</div>
         </div>
       `;
-    }
 
-    function confirmarYContinuar() {
-      sonarBeep('exito');
-      cerrarModalResultado();
+      llamarApiAppsScript({ action: 'checkin', id: idReserva, estado: nuevoEstado }, (err, res) => {
+        sonarBeep('exito');
+        card.innerHTML = `
+          <div class="text-center space-y-3">
+            <div class="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center text-3xl mx-auto font-black shadow-md">✓</div>
+            <h3 class="text-base font-black text-emerald-950 uppercase">${nuevoEstado === 'Ingresó' ? '¡Ingreso Confirmado!' : 'Estado Actualizado'}</h3>
+            <p class="text-xs text-emerald-800">Se registró la entrada de la reserva <strong>${idReserva}</strong> en Google Sheets.</p>
+            <button type="button" onclick="cerrarModalResultado()" class="w-full py-3 rounded-2xl bg-slate-900 text-white font-black text-xs cursor-pointer shadow-sm">
+              Escanear Siguiente Pase
+            </button>
+          </div>
+        `;
+      });
     }
 
     function cerrarModalResultado() {
@@ -300,7 +412,7 @@
       }
     }
 
-    // Arrancar automáticamente al cargar la página
+    // Arrancar la cámara automáticamente al abrir la página
     window.addEventListener('DOMContentLoaded', () => {
       iniciarVideoContinuo();
     });
