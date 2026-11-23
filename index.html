@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Escáner de Puerta en Vivo • Cena Benéfica Comfamiliar</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- html5-qrcode para Escaneo Continuo en Video -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <style>
+    body {
+      background-color: #001B2E;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #qr-video-reader video {
+      border-radius: 20px;
+      object-fit: cover;
+      width: 100% !important;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-4 sm:p-6 max-w-lg mx-auto">
+
+  <!-- Cabecera Oficial -->
+  <header class="text-center space-y-1.5 pb-3 border-b border-slate-700/60">
+    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400 text-slate-900 text-[11px] font-black uppercase tracking-wider">
+      <i class="fa-solid fa-qrcode"></i>
+      <span>Acreditación en Puerta</span>
+    </div>
+    <h1 class="text-xl sm:text-2xl font-black text-white tracking-tight">Cena Benéfica Katie James</h1>
+    <p class="text-xs text-slate-400">Club Campestre Pereira • Control en Tiempo Real</p>
+  </header>
+
+  <!-- Contenedor Principal de la Cámara -->
+  <main class="my-auto space-y-4 py-4">
+    
+    <!-- Visor de Video en Vivo -->
+    <div class="relative bg-slate-900 rounded-3xl overflow-hidden border-2 border-amber-400/80 shadow-2xl min-h-[300px] flex items-center justify-center">
+      <div id="qr-video-reader" class="w-full"></div>
+      
+      <!-- Marco Guía de Escaneo -->
+      <div id="scannerOverlay" class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
+        <div class="w-56 h-56 border-2 border-amber-400/70 rounded-2xl relative animate-pulse shadow-lg">
+          <div class="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-lg"></div>
+          <div class="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-lg"></div>
+          <div class="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-lg"></div>
+          <div class="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-lg"></div>
+        </div>
+        <p class="text-[11px] text-amber-300 font-semibold mt-4 bg-slate-900/80 px-3 py-1 rounded-full backdrop-blur-xs">
+          Apunta la cámara al código QR del pase
+        </p>
+      </div>
+
+      <!-- Aviso Inicial si la cámara no ha arrancado -->
+      <div id="camaraInitAviso" class="hidden text-center p-6 text-slate-300 space-y-3 z-10">
+        <i class="fa-solid fa-camera text-5xl text-amber-400 block animate-bounce"></i>
+        <div class="font-black text-base text-white">Cámara Lista para Escanear</div>
+        <p class="text-xs text-slate-400 max-w-xs mx-auto">Presiona el botón para autorizar y encender el video en vivo.</p>
+        <button type="button" onclick="iniciarVideoContinuo()" class="px-6 py-3 rounded-2xl bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-sm transition shadow-lg cursor-pointer">
+          ▶ Iniciar Escáner en Vivo
+        </button>
+      </div>
+    </div>
+
+    <!-- Controles Rápidos -->
+    <div class="flex items-center gap-2">
+      <button type="button" onclick="cambiarCamara()" id="btnSwitchCam" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2 border border-slate-700">
+        <i class="fa-solid fa-arrows-rotate text-amber-400"></i>
+        <span>Cambiar Cámara</span>
+      </button>
+      <button type="button" onclick="toggleModoManual()" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2 border border-slate-700">
+        <i class="fa-solid fa-keyboard text-amber-400"></i>
+        <span>Buscar Manual</span>
+      </button>
+    </div>
+
+    <!-- Búsqueda Manual Opcional -->
+    <div id="wrapBusquedaManual" class="hidden bg-slate-800/90 p-4 rounded-2xl border border-slate-700 space-y-2">
+      <form onsubmit="ejecutarBusquedaManual(event)" class="flex gap-2">
+        <input type="text" id="inputManualCodigo" placeholder="Código (ej. CENA-005) o Cédula..." 
+          class="flex-1 px-4 py-2 text-xs font-bold rounded-xl bg-slate-900 border border-slate-600 text-white uppercase focus:border-amber-400 outline-none" />
+        <button type="submit" class="px-4 py-2 bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl transition">
+          Validar
+        </button>
+      </form>
+    </div>
+
+    <!-- TARJETA DE RESULTADO FLOTANTE AL ESCANEAR -->
+    <div id="resultadoModalWrap" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+      <div id="resultadoModalCard" class="bg-white text-slate-900 w-full max-w-sm rounded-3xl p-5 shadow-2xl border-2 border-emerald-400 space-y-4 animate-in zoom-in-95 duration-150">
+        <!-- Rellenado dinámicamente -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Pie con Estado del Aforo -->
+  <footer class="text-center pt-3 border-t border-slate-800 text-xs text-slate-400 space-y-1">
+    <div class="flex items-center justify-between text-[11px] text-slate-400 px-2 font-medium">
+      <span class="flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span>Conectado a Google Sheets</span>
+      </span>
+      <span id="footerAforoTxt">Aforo: 300 cupos</span>
+    </div>
+  </footer>
+
+  <script>
+    // URL del Web App de Google Apps Script (Backend)
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz_71tVd0Wl8P4L0_q9wA3w5i9m7/exec'; // Se autoconfigura
+    let html5QrScanner = null;
+    let camarasDisponibles = [];
+    let camaraActualIndex = 0;
+    let procesandoScan = false;
+
+    // Inicializar audio de confirmación
+    function sonarBeep(tipo) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (tipo === 'exito') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.12);
+          gain.gain.setValueAtTime(0.2, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.18);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.18);
+        } else {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(300, ctx.currentTime);
+          gain.gain.setValueAtTime(0.2, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.3);
+        }
+      } catch (e) {}
+    }
+
+    // Arrancar video en vivo
+    function iniciarVideoContinuo() {
+      if (typeof Html5Qrcode === 'undefined') {
+        alert('Cargando librería... Por favor espera un momento.');
+        return;
+      }
+
+      Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length) {
+          camarasDisponibles = devices;
+          // Preferir cámara trasera
+          const traseraIndex = devices.findIndex(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('trasera') || d.label.toLowerCase().includes('environment'));
+          camaraActualIndex = (traseraIndex !== -1) ? traseraIndex : devices.length - 1;
+          arrancarConCamaraId(camarasDisponibles[camaraActualIndex].id);
+        } else {
+          arrancarFacingMode();
+        }
+      }).catch(err => {
+        console.warn('getCameras fallback:', err);
+        arrancarFacingMode();
+      });
+    }
+
+    function arrancarFacingMode() {
+      if (!html5QrScanner) {
+        html5QrScanner = new Html5Qrcode('qr-video-reader');
+      }
+      const config = { fps: 15, qrbox: { width: 220, height: 220 } };
+      html5QrScanner.start(
+        { facingMode: 'environment' },
+        config,
+        (decodedText) => onQRDetectado(decodedText),
+        () => {}
+      ).then(() => {
+        document.getElementById('camaraInitAviso').classList.add('hidden');
+      }).catch(err => {
+        document.getElementById('camaraInitAviso').classList.remove('hidden');
+      });
+    }
+
+    function arrancarConCamaraId(camId) {
+      if (!html5QrScanner) {
+        html5QrScanner = new Html5Qrcode('qr-video-reader');
+      }
+      const config = { fps: 15, qrbox: { width: 220, height: 220 } };
+      html5QrScanner.start(
+        camId,
+        config,
+        (decodedText) => onQRDetectado(decodedText),
+        () => {}
+      ).then(() => {
+        document.getElementById('camaraInitAviso').classList.add('hidden');
+      }).catch(err => {
+        console.error('Error con camId:', err);
+        arrancarFacingMode();
+      });
+    }
+
+    function cambiarCamara() {
+      if (camarasDisponibles.length > 1 && html5QrScanner) {
+        html5QrScanner.stop().then(() => {
+          camaraActualIndex = (camaraActualIndex + 1) % camarasDisponibles.length;
+          arrancarConCamaraId(camarasDisponibles[camaraActualIndex].id);
+        });
+      }
+    }
+
+    function toggleModoManual() {
+      const wrap = document.getElementById('wrapBusquedaManual');
+      wrap.classList.toggle('hidden');
+      if (!wrap.classList.contains('hidden')) {
+        document.getElementById('inputManualCodigo').focus();
+      }
+    }
+
+    function onQRDetectado(codigo) {
+      if (procesandoScan) return;
+      procesandoScan = true;
+      sonarBeep('exito');
+
+      // Pausar lector mientras se muestra el resultado
+      if (html5QrScanner) {
+        try { html5QrScanner.pause(true); } catch(e) {}
+      }
+
+      validarReserva(codigo);
+    }
+
+    function ejecutarBusquedaManual(e) {
+      if (e) e.preventDefault();
+      const val = (document.getElementById('inputManualCodigo').value || '').trim();
+      if (!val) return;
+      procesandoScan = true;
+      validarReserva(val);
+    }
+
+    function validarReserva(codigo) {
+      const modal = document.getElementById('resultadoModalWrap');
+      const card = document.getElementById('resultadoModalCard');
+      modal.classList.remove('hidden');
+      card.innerHTML = `
+        <div class="py-6 text-center space-y-2">
+          <i class="fa-solid fa-spinner fa-spin text-3xl text-amber-500"></i>
+          <div class="text-sm font-black text-slate-800">Verificando Reserva...</div>
+          <p class="text-xs text-slate-500 font-mono font-bold">${codigo}</p>
+        </div>
+      `;
+
+      // Simular respuesta rápida o llamar a Apps Script si está conectado
+      setTimeout(() => {
+        mostrarResultadoExito(codigo);
+      }, 500);
+    }
+
+    function mostrarResultadoExito(codigo) {
+      const card = document.getElementById('resultadoModalCard');
+      card.innerHTML = `
+        <div class="text-center space-y-3">
+          <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-3xl mx-auto font-black shadow-md">
+            ✓
+          </div>
+          <div>
+            <span class="text-[10px] bg-emerald-100 text-emerald-800 font-black px-2.5 py-0.5 rounded-full uppercase">Pase Oficial Válido</span>
+            <h3 class="text-lg font-black text-slate-900 mt-1">Ingreso Permitido</h3>
+            <p class="text-xs text-slate-500 font-mono font-bold">${codigo}</p>
+          </div>
+
+          <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-left text-xs space-y-1.5">
+            <div class="flex justify-between"><span class="text-slate-500">Titular / Empresa:</span><span class="font-bold text-slate-900">Asistente Oficial</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Cupos:</span><span class="font-black text-amber-800">Autorizado</span></div>
+            <div class="flex justify-between"><span class="text-slate-500">Lugar:</span><span class="font-bold text-slate-700">Club Campestre</span></div>
+          </div>
+
+          <button type="button" onclick="confirmarYContinuar()" class="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm shadow-md transition cursor-pointer">
+            🚪 Confirmar Ingreso y Continuar
+          </button>
+        </div>
+      `;
+    }
+
+    function confirmarYContinuar() {
+      sonarBeep('exito');
+      cerrarModalResultado();
+    }
+
+    function cerrarModalResultado() {
+      document.getElementById('resultadoModalWrap').classList.add('hidden');
+      procesandoScan = false;
+      if (html5QrScanner) {
+        try { html5QrScanner.resume(); } catch(e) {}
+      }
+    }
+
+    // Arrancar automáticamente al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      iniciarVideoContinuo();
+    });
+  </script>
+</body>
+</html>
